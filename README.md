@@ -1,6 +1,6 @@
-# 🚑 MedCare – Ambulance Booking & Tracking System
+# 🚑 MedCare – Ambulance Management System
 
-SwiftCare is a full-featured **Flutter** app built with **Firebase** and **Expo ecosystem** to provide real-time ambulance booking, tracking, and emergency coordination. Designed to prioritize urgent care and reduce response time, this system supports users, drivers, and admin workflows.
+MedCare is a full-featured **Flutter** app built with **Firebase** to provide real-time ambulance booking, tracking, and emergency coordination. Designed to prioritize urgent care and reduce response time, this system supports users, drivers, and admin workflows.
 
 ---
 
@@ -87,5 +87,4 @@ Screens:
 
 ---
 
-## 📂 Folder Structure (Example)
 
