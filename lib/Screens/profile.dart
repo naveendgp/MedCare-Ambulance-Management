@@ -41,7 +41,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           userName = userData['name'] ?? 'User';
           userEmail = userData['email'] ?? '';
-          totalBookings = bookings.length;
           emergencyBookings =
               bookings
                   .where((booking) => booking['priority'] == 'Emergency')
@@ -133,17 +132,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     fontSize: 16,
                     color: Colors.white.withOpacity(0.9),
                   ),
-                ),
-                SizedBox(height: 24),
-                _buildProfileStat(
-                  count: totalBookings.toString(),
-                  label: 'Bookings',
-                ),
-                Container(
-                  height: 30,
-                  width: 1,
-                  margin: EdgeInsets.symmetric(horizontal: 24),
-                  color: Colors.white.withOpacity(0.4),
                 ),
               ],
             ),
@@ -521,10 +509,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
       width: double.infinity,
       child: ElevatedButton.icon(
         onPressed: () async {
-          // Log out process
-          final userBox = await Hive.openBox('users');
-          await userBox.delete('current_user_email');
-          Navigator.pushReplacementNamed(context, '/register');
+          // Show confirmation dialog
+          final shouldLogout =
+              await showDialog<bool>(
+                context: context,
+                builder:
+                    (context) => AlertDialog(
+                      title: Text('Log Out'),
+                      content: Text('Are you sure you want to log out?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: Text(
+                            'Logout',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+              ) ??
+              false;
+
+          if (shouldLogout) {
+            // Show loading indicator
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder:
+                  (context) => Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.blue.shade800,
+                    ),
+                  ),
+            );
+
+            try {
+              // Log out process
+              final userBox = await Hive.openBox('users');
+              await userBox.delete('current_user_email');
+
+              // Remove loading indicator
+              Navigator.pop(context);
+
+              // Navigate to login screen and clear navigation stack
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/login',
+                (route) => false,
+              );
+            } catch (e) {
+              // Remove loading indicator
+              Navigator.pop(context);
+
+              // Show error message
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to log out. Please try again.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
         },
         icon: Icon(Icons.logout),
         label: Text('Log Out'),
