@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 class Register extends StatefulWidget {
   const Register({super.key});
@@ -9,10 +11,26 @@ class Register extends StatefulWidget {
 
 class _Register extends State<Register> {
   bool isLogin = true;
+  bool isLoading = false;
+  String? errorMessage;
+
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
+
+  late Box userBox;
+
+  @override
+  void initState() {
+    super.initState();
+    _initHive();
+  }
+
+  Future<void> _initHive() async {
+    await Hive.initFlutter();
+    userBox = await Hive.openBox('users');
+  }
 
   @override
   void dispose() {
@@ -20,6 +38,109 @@ class _Register extends State<Register> {
     _passwordController.dispose();
     _nameController.dispose();
     super.dispose();
+  }
+
+  // Check if user exists in Hive
+  bool _userExists(String email, String password) {
+    final user = userBox.get(email);
+    if (user != null && user['password'] == password) {
+      return true;
+    }
+    return false;
+  }
+
+  // Register user in Hive
+  Future<void> _registerUser(String name, String email, String password) async {
+    await userBox.put(email, {
+      'name': name,
+      'email': email,
+      'password': password,
+    });
+  }
+
+  // Sign in method using Hive
+  Future<void> _signIn() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    await Future.delayed(Duration(milliseconds: 500));
+    if (_userExists(_emailController.text, _passwordController.text)) {
+      // Store current user email to Hive
+      await Hive.box('users').put('current_user_email', _emailController.text);
+      Navigator.pushReplacementNamed(context, "/home");
+    } else {
+      setState(() {
+        errorMessage =
+            "Invalid email or password. Please sign up if you don't have an account.";
+      });
+    }
+    setState(() {
+      isLoading = false;
+    });
+  }
+
+  // Register method using Hive
+  Future<void> _register() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    await Future.delayed(Duration(milliseconds: 500));
+    if (_emailController.text.isNotEmpty &&
+        _passwordController.text.length >= 6 &&
+        _nameController.text.isNotEmpty) {
+      if (userBox.containsKey(_emailController.text)) {
+        setState(() {
+          errorMessage = "User already exists. Please login.";
+        });
+      } else {
+        await _registerUser(
+          _nameController.text,
+          _emailController.text,
+          _passwordController.text,
+        );
+        Navigator.pushReplacementNamed(context, "/home");
+      }
+    } else {
+      setState(() {
+        errorMessage = "Registration failed. Please check your details.";
+      });
+    }
+    setState(() {
+      isLoading = false;
+    });
+  }
+
+  // Dummy reset password method
+  Future<void> _resetPassword() async {
+    if (_emailController.text.isEmpty ||
+        !RegExp(
+          r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+        ).hasMatch(_emailController.text)) {
+      setState(() {
+        errorMessage = 'Please enter a valid email address for password reset';
+      });
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    await Future.delayed(Duration(seconds: 1));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Password reset email (simulated) sent.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    setState(() {
+      isLoading = false;
+    });
   }
 
   @override
@@ -41,15 +162,12 @@ class _Register extends State<Register> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Logo or Icon
                     Icon(
                       Icons.local_hospital_rounded,
                       size: 100,
                       color: Colors.white,
                     ),
                     const SizedBox(height: 20),
-
-                    // App Title
                     Text(
                       'MedCare',
                       style: TextStyle(
@@ -58,7 +176,6 @@ class _Register extends State<Register> {
                         color: Colors.white,
                       ),
                     ),
-
                     Text(
                       'Ambulance Management System',
                       style: TextStyle(
@@ -67,8 +184,6 @@ class _Register extends State<Register> {
                       ),
                     ),
                     const SizedBox(height: 40),
-
-                    // Card containing the form
                     Container(
                       width: double.infinity,
                       constraints: BoxConstraints(maxWidth: 400),
@@ -90,7 +205,6 @@ class _Register extends State<Register> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Form Title
                               Text(
                                 isLogin ? 'Welcome Back' : 'Create Account',
                                 style: TextStyle(
@@ -109,9 +223,28 @@ class _Register extends State<Register> {
                                   fontSize: 14,
                                 ),
                               ),
-                              const SizedBox(height: 30),
-
-                              // Name Field (only for signup)
+                              const SizedBox(height: 20),
+                              if (errorMessage != null)
+                                Container(
+                                  width: double.infinity,
+                                  padding: EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.red.shade200,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    errorMessage!,
+                                    style: TextStyle(
+                                      color: Colors.red.shade800,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              if (errorMessage != null)
+                                const SizedBox(height: 20),
                               if (!isLogin) ...[
                                 TextFormField(
                                   controller: _nameController,
@@ -137,8 +270,6 @@ class _Register extends State<Register> {
                                 ),
                                 const SizedBox(height: 20),
                               ],
-
-                              // Email Field
                               TextFormField(
                                 controller: _emailController,
                                 decoration: InputDecoration(
@@ -168,8 +299,6 @@ class _Register extends State<Register> {
                                 },
                               ),
                               const SizedBox(height: 20),
-
-                              // Password Field
                               TextFormField(
                                 controller: _passwordController,
                                 obscureText: true,
@@ -197,15 +326,11 @@ class _Register extends State<Register> {
                                 },
                               ),
                               const SizedBox(height: 15),
-
-                              // Forgot Password Link (only for login)
                               if (isLogin)
                                 Align(
                                   alignment: Alignment.centerRight,
                                   child: TextButton(
-                                    onPressed: () {
-                                      // Add forgot password functionality
-                                    },
+                                    onPressed: _resetPassword,
                                     child: Text(
                                       'Forgot Password?',
                                       style: TextStyle(
@@ -215,27 +340,19 @@ class _Register extends State<Register> {
                                   ),
                                 ),
                               const SizedBox(height: 20),
-
-                              // Submit Button
                               SizedBox(
                                 width: double.infinity,
                                 height: 50,
                                 child: ElevatedButton(
-                                  onPressed: () {
-                                    if (_formKey.currentState!.validate()) {
-                                      // Handle login/signup
-                                      Navigator.pushNamed(context, "/home");
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            'Processing ${isLogin ? 'Login' : 'Registration'}...',
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                  },
+                                  onPressed:
+                                      isLoading
+                                          ? null
+                                          : () {
+                                            if (_formKey.currentState!
+                                                .validate()) {
+                                              isLogin ? _signIn() : _register();
+                                            }
+                                          },
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.blue.shade800,
                                     foregroundColor: Colors.white,
@@ -244,15 +361,19 @@ class _Register extends State<Register> {
                                     ),
                                     elevation: 3,
                                   ),
-                                  child: Text(
-                                    isLogin ? 'Login' : 'Sign Up',
-                                    style: TextStyle(fontSize: 16),
-                                  ),
+                                  child:
+                                      isLoading
+                                          ? CircularProgressIndicator(
+                                            color: Colors.white,
+                                            strokeWidth: 2,
+                                          )
+                                          : Text(
+                                            isLogin ? 'Login' : 'Sign Up',
+                                            style: TextStyle(fontSize: 16),
+                                          ),
                                 ),
                               ),
                               const SizedBox(height: 20),
-
-                              // Toggle between Login and Signup
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -268,6 +389,7 @@ class _Register extends State<Register> {
                                     onPressed: () {
                                       setState(() {
                                         isLogin = !isLogin;
+                                        errorMessage = null;
                                       });
                                     },
                                     child: Text(
@@ -280,6 +402,8 @@ class _Register extends State<Register> {
                                   ),
                                 ],
                               ),
+                              const SizedBox(height: 20),
+                              // Driver login section commented out
                             ],
                           ),
                         ),

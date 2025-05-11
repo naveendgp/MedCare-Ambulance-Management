@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 
 class Home extends StatefulWidget {
   const Home({super.key});
 
   @override
-  State<Home> createState() => _Home();
+  State<Home> createState() => _HomeState();
 }
 
-class _Home extends State<Home> {
+class _HomeState extends State<Home> {
   int _selectedIndex = 0;
 
   @override
@@ -31,6 +32,7 @@ class _Home extends State<Home> {
               child: Icon(Icons.person, color: Colors.blue.shade800, size: 20),
             ),
             onPressed: () {
+              Navigator.pushNamed(context, "/profile");
               // Navigate to profile or settings
             },
           ),
@@ -168,6 +170,7 @@ class _Home extends State<Home> {
                       color: Colors.purple.shade700,
                       onTap: () {
                         // Navigate to booking history screen
+                        Navigator.pushNamed(context, "/bookingHistory");
                       },
                     ),
                   ),
@@ -202,7 +205,7 @@ class _Home extends State<Home> {
                   ),
                   TextButton(
                     onPressed: () {
-                      // Navigate to full booking history
+                      Navigator.pushNamed(context, "/bookingHistory");
                     },
                     child: Text('View All'),
                   ),
@@ -211,18 +214,115 @@ class _Home extends State<Home> {
               SizedBox(height: 10),
 
               // Recent booking list
-              _buildRecentBookingCard(
-                date: 'May 5, 2025',
-                status: 'Completed',
-                destination: 'City Hospital',
-                isActive: false,
-              ),
-              SizedBox(height: 10),
-              _buildRecentBookingCard(
-                date: 'April 28, 2025',
-                status: 'Cancelled',
-                destination: 'Apollo Medical Center',
-                isActive: false,
+              Container(
+                height: 200, // Fixed height container
+                child: FutureBuilder(
+                  future: Future.wait([
+                    Hive.openBox('bookings'),
+                    Hive.openBox('users'),
+                  ]),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return Center(child: CircularProgressIndicator());
+                    }
+
+                    final bookingBox = Hive.box('bookings');
+                    final userBox = Hive.box('users');
+                    final currentUserEmail = userBox.get('current_user_email');
+
+                    // Filter bookings for current user
+                    final allBookings = bookingBox.values.toList();
+                    final bookings =
+                        allBookings
+                            .where(
+                              (booking) =>
+                                  booking is Map &&
+                                  booking['userEmail'] == currentUserEmail,
+                            )
+                            .toList()
+                            .reversed
+                            .toList();
+
+                    if (bookings.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.history, size: 40, color: Colors.grey),
+                            SizedBox(height: 10),
+                            Text(
+                              'No recent bookings found',
+                              style: TextStyle(color: Colors.grey.shade600),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      physics: BouncingScrollPhysics(),
+                      itemCount: bookings.length > 3 ? 3 : bookings.length,
+                      itemBuilder: (context, index) {
+                        final booking = bookings[index];
+                        return Card(
+                          margin: EdgeInsets.only(bottom: 10),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            leading: CircleAvatar(
+                              backgroundColor: _getPriorityColor(
+                                booking['priority'],
+                              ).withOpacity(0.2),
+                              child: Icon(
+                                Icons.local_taxi,
+                                color: _getPriorityColor(booking['priority']),
+                              ),
+                            ),
+                            title: Text(
+                              booking['pickup'] ?? 'Unknown Location',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('To: ${booking['destination'] ?? ''}'),
+                                Text(
+                                  'Priority: ${booking['priority'] ?? 'Standard'}',
+                                  style: TextStyle(
+                                    color: _getPriorityColor(
+                                      booking['priority'],
+                                    ),
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                Text(
+                                  booking['timestamp'] != null
+                                      ? _formatDateTime(booking['timestamp'])
+                                      : 'Unknown time',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            trailing: Icon(Icons.arrow_forward_ios, size: 16),
+                            onTap: () {
+                              // Show booking details
+                              Navigator.pushNamed(context, "/bookingHistory");
+                            },
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
 
               SizedBox(height: 25),
@@ -300,7 +400,7 @@ class _Home extends State<Home> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
+              color: Colors.grey.withAlpha((0.1 * 255).toInt()),
               spreadRadius: 1,
               blurRadius: 6,
               offset: Offset(0, 1),
@@ -334,90 +434,50 @@ class _Home extends State<Home> {
     );
   }
 
-  Widget _buildRecentBookingCard({
-    required String date,
-    required String status,
-    required String destination,
-    required bool isActive,
-  }) {
-    Color statusColor =
-        status == 'Completed'
-            ? Colors.green
-            : status == 'Cancelled'
-            ? Colors.red
-            : Colors.orange;
+  Color _getPriorityColor(String? priority) {
+    switch (priority) {
+      case 'Emergency':
+        return Colors.red;
+      case 'Inter-Hospital Transfer':
+        return Colors.orange;
+      default:
+        return Colors.green;
+    }
+  }
 
-    return Container(
-      padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 4,
-            offset: Offset(0, 1),
-          ),
-        ],
-        border: isActive ? Border.all(color: Colors.blue.shade400) : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.calendar_today, size: 16, color: Colors.grey.shade600),
-              SizedBox(width: 8),
-              Text(
-                date,
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-              ),
-              Spacer(),
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  status,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 10),
-          Row(
-            children: [
-              Icon(Icons.local_hospital, size: 16, color: Colors.blue.shade700),
-              SizedBox(width: 8),
-              Text(
-                destination,
-                style: TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
-              ),
-            ],
-          ),
-          SizedBox(height: 10),
-          if (isActive)
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: () {
-                  // Navigate to tracking screen
-                },
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.blue.shade400),
-                ),
-                child: Text('Track Ambulance'),
-              ),
-            ),
-        ],
-      ),
-    );
+  String _formatDateTime(String dateTimeString) {
+    final dateTime = DateTime.parse(dateTimeString);
+    final now = DateTime.now();
+
+    if (dateTime.year == now.year &&
+        dateTime.month == now.month &&
+        dateTime.day == now.day) {
+      // Today - show time only
+      return 'Today, ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else if (dateTime.year == now.year) {
+      // This year - show date and month
+      return '${dateTime.day} ${_getMonthName(dateTime.month)}, ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else {
+      // Different year
+      return '${dateTime.day} ${_getMonthName(dateTime.month)} ${dateTime.year}';
+    }
+  }
+
+  String _getMonthName(int month) {
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return monthNames[month - 1];
   }
 }

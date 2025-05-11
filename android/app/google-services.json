@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "170706358034",
+    "firebase_url": "https://sbm-services-370f9-default-rtdb.firebaseio.com",
+    "project_id": "sbm-services-370f9",
+    "storage_bucket": "sbm-services-370f9.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:170706358034:android:00810a455e5dbe65446dcb",
+        "android_client_info": {
+          "package_name": "com.example.med_care"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARFoBuChbntLC-HGcJFMXeEjzfx9CqWok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:170706358034:android:7529bfea7641e576446dcb",
+        "android_client_info": {
+          "package_name": "com.naveen.sbmservices"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARFoBuChbntLC-HGcJFMXeEjzfx9CqWok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

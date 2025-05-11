@@ -3,6 +3,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 class BookAmbulance extends StatefulWidget {
   const BookAmbulance({super.key});
@@ -31,6 +33,19 @@ class _BookAmbulance extends State<BookAmbulance> {
     'Non-Emergency',
     'Inter-Hospital Transfer',
   ];
+
+  late Box bookingBox;
+
+  @override
+  void initState() {
+    super.initState();
+    _initHive();
+  }
+
+  Future<void> _initHive() async {
+    await Hive.initFlutter();
+    bookingBox = await Hive.openBox('bookings');
+  }
 
   @override
   void dispose() {
@@ -228,11 +243,39 @@ class _BookAmbulance extends State<BookAmbulance> {
     }
   }
 
-  void _submitBooking() {
+  Future<void> _saveBookingToHive() async {
+    // Get current user's email from shared preferences or Hive
+    final userBox = await Hive.openBox('users');
+    final currentUserEmail = userBox.get('current_user_email');
+
+    if (currentUserEmail == null) {
+      // Fallback if no user is logged in
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please log in to book an ambulance')),
+      );
+      return;
+    }
+
+    final booking = {
+      'priority': _selectedPriority,
+      'pickup': _pickupLocationController.text,
+      'destination': _destinationController.text,
+      'additionalInfo': _additionalInfoController.text,
+      'timestamp': DateTime.now().toIso8601String(),
+      'userEmail': currentUserEmail, // Associate with specific user
+    };
+
+    await bookingBox.add(booking);
+  }
+
+  void _submitBooking() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
+
+      // Save booking to Hive
+      await _saveBookingToHive();
 
       // Show booking confirmation
       Future.delayed(const Duration(seconds: 2), () {
@@ -447,6 +490,23 @@ class _BookAmbulance extends State<BookAmbulance> {
                           ),
                         ),
                       ],
+                    ),
+                    SizedBox(height: 8),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => RecentBookingsScreen(),
+                          ),
+                        );
+                      },
+                      icon: Icon(Icons.history),
+                      label: Text('View Recent Bookings'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue.shade800,
+                      ),
                     ),
                   ],
                 ),
@@ -975,5 +1035,78 @@ class _BookAmbulance extends State<BookAmbulance> {
       default:
         return '';
     }
+  }
+}
+
+// Recent Bookings Screen
+class RecentBookingsScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: Hive.openBox('bookings'),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text('Recent Bookings'),
+              backgroundColor: Colors.blue.shade800,
+            ),
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final bookingBox = Hive.box('bookings');
+        final bookings = bookingBox.values.toList().reversed.toList();
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('Recent Bookings'),
+            backgroundColor: Colors.blue.shade800,
+          ),
+          body:
+              bookings.isEmpty
+                  ? Center(child: Text('No bookings found.'))
+                  : ListView.builder(
+                    itemCount: bookings.length,
+                    itemBuilder: (context, index) {
+                      final booking = bookings[index];
+                      return Card(
+                        margin: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.local_taxi,
+                            color: Colors.blue.shade800,
+                          ),
+                          title: Text(
+                            booking['pickup'] ?? 'Unknown Pickup',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Destination: ${booking['destination'] ?? ''}',
+                              ),
+                              Text('Priority: ${booking['priority'] ?? ''}'),
+                              if ((booking['additionalInfo'] ?? '').isNotEmpty)
+                                Text('Info: ${booking['additionalInfo']}'),
+                              Text(
+                                'Time: ${booking['timestamp'] != null ? DateTime.parse(booking['timestamp']).toLocal().toString().substring(0, 16) : ''}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+        );
+      },
+    );
   }
 }
