@@ -150,26 +150,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildProfileStat({required String count, required String label}) {
-    return Column(
-      children: [
-        Text(
-          count,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8)),
-        ),
-      ],
-    );
-  }
-
   Widget _buildProfileBody() {
     return Container(
       decoration: BoxDecoration(
@@ -551,18 +531,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             );
 
             try {
-              // Log out process
+              // Log out process - clear all user data
               final userBox = await Hive.openBox('users');
               await userBox.delete('current_user_email');
+
+              // Optional: Clear any session or auth tokens if you have them
+              // final prefs = await SharedPreferences.getInstance();
+              // await prefs.clear(); // Clear all preferences if needed
 
               // Remove loading indicator
               Navigator.pop(context);
 
-              // Navigate to login screen and clear navigation stack
-              Navigator.pushNamedAndRemoveUntil(
-                context,
-                '/login',
-                (route) => false,
+              // Navigate to login screen and clear ALL previous routes
+              // This ensures all activities are destroyed
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                '/register',
+                (Route<dynamic> route) =>
+                    false, // This predicate ensures ALL routes are removed
               );
             } catch (e) {
               // Remove loading indicator
