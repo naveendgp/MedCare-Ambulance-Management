@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:med_care/services/mongodb_service.dart';
 
 class BookAmbulance extends StatefulWidget {
   const BookAmbulance({super.key});
@@ -243,8 +244,8 @@ class _BookAmbulance extends State<BookAmbulance> {
     }
   }
 
-  Future<void> _saveBookingToHive() async {
-    // Get current user's email from shared preferences or Hive
+  Future<String> _saveBookingToHive() async {
+    // Get current user's email from Hive
     final userBox = await Hive.openBox('users');
     final currentUserEmail = userBox.get('current_user_email');
 
@@ -253,19 +254,33 @@ class _BookAmbulance extends State<BookAmbulance> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please log in to book an ambulance')),
       );
-      return;
+      throw Exception('User not logged in');
     }
 
+    // Get user data for name
+    final userData = userBox.get(currentUserEmail);
+    final userName = userData?['name'] ?? 'Unknown';
+
+    // Create a unique ID for local booking
+    final localId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+
+    // Create booking data
     final booking = {
-      'priority': _selectedPriority,
+      '_id': localId,
+      'userName': userName,
+      'userEmail': currentUserEmail,
       'pickup': _pickupLocationController.text,
       'destination': _destinationController.text,
+      'priority': _selectedPriority,
       'additionalInfo': _additionalInfoController.text,
-      'timestamp': DateTime.now().toIso8601String(),
-      'userEmail': currentUserEmail, // Associate with specific user
+      'status': 'pending',
+      'createdAt': DateTime.now().toIso8601String(),
     };
 
+    // Save to Hive box
     await bookingBox.add(booking);
+
+    return localId; // Return the ID so it can be used for tracking
   }
 
   void _submitBooking() async {
@@ -274,21 +289,79 @@ class _BookAmbulance extends State<BookAmbulance> {
         _isLoading = true;
       });
 
-      // Save booking to Hive
-      await _saveBookingToHive();
+      try {
+        // Validate that we have at least pickup location
+        if (_pickupLocationController.text.isEmpty) {
+          throw Exception('Pickup location is required');
+        }
 
-      // Show booking confirmation
-      Future.delayed(const Duration(seconds: 2), () {
+        // Try to save booking to MongoDB
+        try {
+          final booking = await MongoDBService.createBooking(
+            pickup: _pickupLocationController.text,
+            destination: _destinationController.text,
+            priority: _selectedPriority,
+            additionalInfo: _additionalInfoController.text,
+          );
+
+          setState(() {
+            _isLoading = false;
+          });
+
+          // Show confirmation dialog with booking ID
+          _showConfirmationDialog(booking['_id']);
+        } catch (e) {
+          // If MongoDB fails, save locally and continue
+          await _saveBookingToHive();
+
+          // Create a local booking ID
+          final localBookingId =
+              'local_${DateTime.now().millisecondsSinceEpoch}';
+
+          setState(() {
+            _isLoading = false;
+          });
+
+          // Show confirmation dialog with local ID
+          _showConfirmationDialog(localBookingId);
+
+          // Notify user about offline mode
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved locally - You\'re in offline mode'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      } catch (e) {
         setState(() {
           _isLoading = false;
         });
 
-        _showConfirmationDialog();
-      });
+        // Show error message for other errors
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to book ambulance: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'RETRY',
+              textColor: Colors.white,
+              onPressed: _submitBooking,
+            ),
+            duration: Duration(seconds: 8),
+          ),
+        );
+      }
     }
   }
 
-  void _showConfirmationDialog() {
+  void _showConfirmationDialog([String? bookingId]) {
+    // Use the provided bookingId or generate a fallback
+    final displayId =
+        bookingId ??
+        'AMB${DateTime.now().millisecondsSinceEpoch.toString().substring(7, 13)}';
+
     showDialog(
       context: context,
       builder:
@@ -296,7 +369,6 @@ class _BookAmbulance extends State<BookAmbulance> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(15),
             ),
-            // Using Dialog instead of AlertDialog for more control over the size
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.9,
@@ -327,113 +399,49 @@ class _BookAmbulance extends State<BookAmbulance> {
                     ),
                     SizedBox(height: 16),
 
-                    // Content - wrapped in Expanded with SingleChildScrollView
-                    Flexible(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.green.shade100,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      'Your ambulance has been booked successfully!',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.green.shade800,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(height: 20),
-                            _buildConfirmationDetailItem(
-                              icon: Icons.priority_high,
-                              title: 'Priority',
-                              value: _selectedPriority,
-                              color: _getPriorityColor(_selectedPriority),
-                            ),
-                            _buildConfirmationDetailItem(
-                              icon: Icons.location_on,
-                              title: 'Pickup',
-                              value: _pickupLocationController.text,
-                            ),
-                            _buildConfirmationDetailItem(
-                              icon: Icons.navigation,
-                              title: 'Destination',
-                              value: _destinationController.text,
-                            ),
-                            Divider(height: 20),
-                            _buildConfirmationDetailItem(
-                              icon: Icons.access_time,
-                              title: 'Estimated Arrival',
-                              value:
-                                  _selectedPriority == 'Emergency'
-                                      ? '5-10 minutes'
-                                      : '15-20 minutes',
-                              color: Colors.blue.shade700,
-                              isBold: true,
-                            ),
-                            SizedBox(height: 10),
-                            Container(
-                              padding: EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: Colors.blue.shade100),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.info_outline,
+                    // Rest of your dialog content...
+
+                    // Update the booking ID display:
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.blue.shade100),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.blue.shade800),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Booking ID: ${displayId.length > 10 ? displayId.substring(0, 10) + '...' : displayId}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
                                     color: Colors.blue.shade800,
                                   ),
-                                  SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Booking ID: #AMB${DateTime.now().millisecondsSinceEpoch.toString().substring(7, 13)}',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.blue.shade800,
-                                          ),
-                                        ),
-                                        SizedBox(height: 4),
-                                        Text(
-                                          'Please keep this ID for reference',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.blue.shade800
-                                                .withOpacity(0.8),
-                                          ),
-                                        ),
-                                      ],
+                                ),
+                                SizedBox(height: 4),
+                                Text(
+                                  'Please keep this ID for reference',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blue.shade800.withOpacity(
+                                      0.8,
                                     ),
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
 
-                    // Buttons
+                    // Track button
                     SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -444,20 +452,23 @@ class _BookAmbulance extends State<BookAmbulance> {
                             Navigator.of(context).pop();
                           },
                           style: TextButton.styleFrom(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                            ), // Reduce padding
+                            padding: EdgeInsets.symmetric(horizontal: 8),
                           ),
                           child: Text(
                             'Back',
                             style: TextStyle(color: Colors.grey.shade700),
                           ),
                         ),
-                        SizedBox(width: 4), // Reduced spacing
+                        SizedBox(width: 4),
                         ElevatedButton(
                           onPressed: () {
-                            Navigator.pushNamed(context, "/trackAmbulance");
-                            // Navigate to tracking screen
+                            Navigator.of(context).pop();
+                            // Pass the booking ID to the tracking screen
+                            Navigator.pushNamed(
+                              context,
+                              "/trackAmbulance",
+                              arguments: displayId,
+                            );
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue.shade800,
@@ -467,30 +478,32 @@ class _BookAmbulance extends State<BookAmbulance> {
                             padding: EdgeInsets.symmetric(
                               horizontal: 8,
                               vertical: 8,
-                            ), // Reduced padding
-                            minimumSize: Size.zero, // Allow smaller button
+                            ),
+                            minimumSize: Size.zero,
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
                                 Icons.location_searching,
-                                color: Colors.black,
+                                color: Colors.white,
                                 size: 14,
-                              ), // Smaller icon
-                              SizedBox(width: 4), // Reduced spacing
+                              ),
+                              SizedBox(width: 4),
                               Text(
                                 'Track',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.white,
                                 ),
-                              ), // Shorter text, smaller font
+                              ),
                             ],
                           ),
                         ),
                       ],
                     ),
+
+                    // View bookings button
                     SizedBox(height: 8),
                     ElevatedButton.icon(
                       onPressed: () {
@@ -513,43 +526,6 @@ class _BookAmbulance extends State<BookAmbulance> {
               ),
             ),
           ),
-    );
-  }
-
-  Widget _buildConfirmationDetailItem({
-    required IconData icon,
-    required String title,
-    required String value,
-    Color? color,
-    bool isBold = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: color ?? Colors.grey.shade700),
-          SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-              SizedBox(height: 2),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-                  color: color ?? Colors.black87,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 
@@ -1039,74 +1015,299 @@ class _BookAmbulance extends State<BookAmbulance> {
 }
 
 // Recent Bookings Screen
-class RecentBookingsScreen extends StatelessWidget {
+class RecentBookingsScreen extends StatefulWidget {
+  @override
+  State<RecentBookingsScreen> createState() => _RecentBookingsScreenState();
+}
+
+class _RecentBookingsScreenState extends State<RecentBookingsScreen> {
+  bool isLoading = true;
+  List<Map<String, dynamic>> bookings = [];
+  String? errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBookings();
+  }
+
+  Future<void> _loadBookings() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    try {
+      // Get bookings from MongoDB
+      final fetchedBookings = await MongoDBService.getUserBookings();
+
+      setState(() {
+        bookings = fetchedBookings;
+        isLoading = false;
+      });
+    } catch (e) {
+      // If MongoDB fetch fails, fall back to Hive
+      try {
+        final bookingBox = await Hive.openBox('bookings');
+        final userBox = await Hive.openBox('users');
+        final currentUserEmail = userBox.get('current_user_email');
+
+        // Filter bookings for the current user
+        final List<Map<String, dynamic>> localBookings = [];
+        for (var i = 0; i < bookingBox.length; i++) {
+          final booking = bookingBox.getAt(i);
+          if (booking != null && booking['userEmail'] == currentUserEmail) {
+            localBookings.add(Map<String, dynamic>.from(booking));
+          }
+        }
+
+        setState(() {
+          bookings = localBookings;
+          isLoading = false;
+          errorMessage = "Using local data (couldn't connect to server)";
+        });
+      } catch (e) {
+        setState(() {
+          isLoading = false;
+          errorMessage = "Failed to load bookings: ${e.toString()}";
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: Hive.openBox('bookings'),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return Scaffold(
-            appBar: AppBar(
-              title: Text('Recent Bookings'),
-              backgroundColor: Colors.blue.shade800,
-            ),
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final bookingBox = Hive.box('bookings');
-        final bookings = bookingBox.values.toList().reversed.toList();
-
-        return Scaffold(
-          appBar: AppBar(
-            title: Text('Recent Bookings'),
-            backgroundColor: Colors.blue.shade800,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Recent Bookings'),
+        backgroundColor: Colors.blue.shade800,
+        actions: [
+          IconButton(
+            icon: Icon(Icons.refresh),
+            onPressed: _loadBookings,
+            tooltip: 'Refresh',
           ),
-          body:
-              bookings.isEmpty
-                  ? Center(child: Text('No bookings found.'))
-                  : ListView.builder(
-                    itemCount: bookings.length,
-                    itemBuilder: (context, index) {
-                      final booking = bookings[index];
-                      return Card(
-                        margin: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
+        ],
+      ),
+      body:
+          isLoading
+              ? Center(child: CircularProgressIndicator())
+              : errorMessage != null && bookings.isEmpty
+              ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error_outline, size: 60, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        errorMessage!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey.shade700),
+                      ),
+                      SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: _loadBookings,
+                        child: Text('Try Again'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue.shade800,
                         ),
-                        child: ListTile(
-                          leading: Icon(
-                            Icons.local_taxi,
-                            color: Colors.blue.shade800,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+              : bookings.isEmpty
+              ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.history, size: 60, color: Colors.grey),
+                    SizedBox(height: 16),
+                    Text(
+                      'No bookings found',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+              : ListView.builder(
+                itemCount: bookings.length,
+                itemBuilder: (context, index) {
+                  final booking = bookings[index];
+                  return Card(
+                    margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 2,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.all(16),
+                      leading: Container(
+                        padding: EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _getPriorityColor(
+                            booking['priority'] ?? 'Non-Emergency',
+                          ).withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.local_taxi,
+                          color: _getPriorityColor(
+                            booking['priority'] ?? 'Non-Emergency',
                           ),
-                          title: Text(
-                            booking['pickup'] ?? 'Unknown Pickup',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                      ),
+                      title: Text(
+                        booking['pickup'] ?? 'Unknown Pickup',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SizedBox(height: 4),
+                          Row(
                             children: [
-                              Text(
-                                'Destination: ${booking['destination'] ?? ''}',
+                              Icon(
+                                Icons.location_on,
+                                size: 14,
+                                color: Colors.grey,
                               ),
-                              Text('Priority: ${booking['priority'] ?? ''}'),
-                              if ((booking['additionalInfo'] ?? '').isNotEmpty)
-                                Text('Info: ${booking['additionalInfo']}'),
-                              Text(
-                                'Time: ${booking['timestamp'] != null ? DateTime.parse(booking['timestamp']).toLocal().toString().substring(0, 16) : ''}',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
+                              SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  booking['destination'] ??
+                                      'Unknown Destination',
                                 ),
                               ),
                             ],
                           ),
-                        ),
-                      );
-                    },
-                  ),
-        );
-      },
+                          SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.priority_high,
+                                size: 14,
+                                color: Colors.grey,
+                              ),
+                              SizedBox(width: 4),
+                              Text(booking['priority'] ?? ''),
+                              Spacer(),
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _getStatusColor(
+                                    booking['status'] ?? 'pending',
+                                  ).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  _formatStatus(booking['status'] ?? 'pending'),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: _getStatusColor(
+                                      booking['status'] ?? 'pending',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 4),
+                          if ((booking['additionalInfo'] ?? '').isNotEmpty)
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 14,
+                                  color: Colors.grey,
+                                ),
+                                SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    booking['additionalInfo'],
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          SizedBox(height: 6),
+                          Text(
+                            'Booked on: ${_formatDate(booking['createdAt'])}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                      onTap: () {
+                        // Navigate to booking details or tracking
+                        if (booking['_id'] != null) {
+                          Navigator.pushNamed(
+                            context,
+                            "/trackAmbulance",
+                            arguments: booking['_id'],
+                          );
+                        }
+                      },
+                    ),
+                  );
+                },
+              ),
     );
+  }
+
+  Color _getPriorityColor(String priority) {
+    switch (priority) {
+      case 'Emergency':
+        return Colors.red;
+      case 'Inter-Hospital Transfer':
+        return Colors.orange;
+      default:
+        return Colors.green;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return Colors.green;
+      case 'in progress':
+      case 'accepted':
+        return Colors.blue;
+      case 'cancelled':
+        return Colors.red;
+      default:
+        return Colors.amber;
+    }
+  }
+
+  String _formatStatus(String status) {
+    return status
+        .split('_')
+        .map(
+          (word) =>
+              word.isEmpty
+                  ? ''
+                  : '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}',
+        )
+        .join(' ');
+  }
+
+  String _formatDate(String? dateStr) {
+    if (dateStr == null) return 'Unknown date';
+    try {
+      final date = DateTime.parse(dateStr);
+      return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return dateStr;
+    }
   }
 }

@@ -143,6 +143,11 @@ class _Register extends State<Register> {
     });
   }
 
+  // Navigate to driver login
+  void _navigateToDriverLogin() {
+    Navigator.pushNamed(context, "/driverLogin");
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -403,7 +408,39 @@ class _Register extends State<Register> {
                                 ],
                               ),
                               const SizedBox(height: 20),
-                              // Driver login section commented out
+                              // Driver login section
+                              Divider(
+                                color: Colors.grey.shade300,
+                                thickness: 1,
+                              ),
+                              const SizedBox(height: 20),
+                              Center(
+                                child: Text(
+                                  'Are you a driver?',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade700,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 15),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 50,
+                                child: ElevatedButton.icon(
+                                  onPressed: _navigateToDriverLogin,
+                                  icon: Icon(Icons.drive_eta),
+                                  label: Text('Driver Login'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green.shade700,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    elevation: 2,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),

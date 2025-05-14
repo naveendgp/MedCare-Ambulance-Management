@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:med_care/services/mongodb_service.dart';
 
 enum BookingStatus { pending, accepted, inProgress, completed, cancelled }
 
@@ -13,56 +14,127 @@ class TrackAmbulance extends StatefulWidget {
 }
 
 class _TrackAmbulance extends State<TrackAmbulance> {
-  // In a real app, you would pass this data from the booking page or fetch from a server
-  BookingStatus _status =
-      BookingStatus.pending; // Change this to test different states
-  final String _bookingId = "AMB123456";
-  final String _pickupLocation = "123 Main Street, Bangalore";
-  final String _destination = "City Hospital, MG Road";
-  final String _priority = "Emergency";
+  BookingStatus _status = BookingStatus.pending;
+  String _bookingId = "";
+  String _pickupLocation = "";
+  String _destination = "";
+  String _priority = "Non-Emergency";
 
   // Ambulance details (only available when request is accepted)
-  final String _driverName = "Rajesh Kumar";
-  final String _driverPhone = "+91 98765 43210";
-  final String _ambulanceNumber = "KA 01 AB 1234";
-  final String _vehicleType = "Advanced Life Support";
+  String _driverName = "";
+  String _driverPhone = "";
+  String _ambulanceNumber = "";
+  String _vehicleType = "";
 
   // Sample coordinates for tracking
   LatLng _ambulanceLocation = LatLng(12.9716, 77.5946); // Starting point
   LatLng _destinationLocation = LatLng(12.9866, 77.6196); // Ending point
   final MapController _mapController = MapController();
   Timer? _timer;
+  Timer? _statusCheckTimer;
   double _estimatedTimeMinutes = 15;
   double _distanceKm = 3.2;
 
   // For animation of ambulance movement
   int _moveCounter = 0;
   final int _totalMoves = 20;
+  bool _isLoading = true;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
+    _fetchBookingDetails();
 
-    // Simulated status change: Pending -> Accepted after 5 seconds
-    // In a real app, this would be a server notification
-    if (_status == BookingStatus.pending) {
-      Future.delayed(Duration(seconds: 5), () {
-        if (mounted) {
-          setState(() {
-            _status = BookingStatus.accepted;
-          });
-
-          // Start ambulance movement simulation
-          _startAmbulanceSimulation();
-        }
-      });
-    }
+    // Start periodic status check
+    _startStatusCheck();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _statusCheckTimer?.cancel();
     super.dispose();
+  }
+
+  void _startStatusCheck() {
+    // Check booking status every 10 seconds
+    _statusCheckTimer = Timer.periodic(Duration(seconds: 10), (timer) {
+      _fetchBookingDetails();
+    });
+  }
+
+  Future<void> _fetchBookingDetails() async {
+    try {
+      final dynamic args = ModalRoute.of(context)?.settings.arguments;
+      String bookingId;
+
+      if (args != null) {
+        bookingId = args.toString();
+      } else {
+        throw Exception('No booking ID provided');
+      }
+
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      // Fetch booking details from MongoDB
+      final bookingDetails = await MongoDBService.getBookingById(bookingId);
+
+      if (bookingDetails == null) {
+        throw Exception('Booking not found');
+      }
+
+      // Update state with booking details
+      setState(() {
+        _bookingId = bookingId;
+        _pickupLocation = bookingDetails['pickup'] ?? 'Unknown';
+        _destination = bookingDetails['destination'] ?? 'Unknown';
+        _priority = bookingDetails['priority'] ?? 'Non-Emergency';
+
+        // Parse status
+        final String status =
+            bookingDetails['status']?.toLowerCase() ?? 'pending';
+        if (status == 'accepted') {
+          _status = BookingStatus.accepted;
+          // Get driver details if status is accepted
+          _driverName = bookingDetails['driverName'] ?? 'Unknown Driver';
+          _driverPhone = bookingDetails['driverPhone'] ?? 'Not Available';
+          _ambulanceNumber = bookingDetails['ambulanceNumber'] ?? 'Unknown';
+          _vehicleType =
+              bookingDetails['ambulanceType'] ?? 'Basic Life Support';
+
+          // Start ambulance movement simulation
+          if (_timer == null) {
+            _startAmbulanceSimulation();
+          }
+        } else if (status == 'in_progress' || status == 'in progress') {
+          _status = BookingStatus.inProgress;
+          _driverName = bookingDetails['driverName'] ?? 'Unknown Driver';
+          _driverPhone = bookingDetails['driverPhone'] ?? 'Not Available';
+          _ambulanceNumber = bookingDetails['ambulanceNumber'] ?? 'Unknown';
+          _vehicleType =
+              bookingDetails['ambulanceType'] ?? 'Basic Life Support';
+        } else if (status == 'completed') {
+          _status = BookingStatus.completed;
+          _statusCheckTimer?.cancel(); // Stop checking status
+        } else if (status == 'cancelled') {
+          _status = BookingStatus.cancelled;
+          _statusCheckTimer?.cancel(); // Stop checking status
+        } else {
+          _status = BookingStatus.pending;
+        }
+
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = e.toString();
+      });
+    }
   }
 
   void _startAmbulanceSimulation() {
@@ -95,13 +167,62 @@ class _TrackAmbulance extends State<TrackAmbulance> {
           setState(() {
             _status = BookingStatus.inProgress;
           });
+
+          // Update status in MongoDB
+          MongoDBService.updateBookingStatus(_bookingId, 'in_progress');
         }
       }
     });
   }
 
+  Future<void> _cancelBooking() async {
+    try {
+      final success = await MongoDBService.updateBookingStatus(
+        _bookingId,
+        'cancelled',
+      );
+
+      if (success) {
+        setState(() {
+          _status = BookingStatus.cancelled;
+        });
+
+        _timer?.cancel();
+        _statusCheckTimer?.cancel();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Booking cancelled successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        throw Exception('Failed to cancel booking');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error cancelling booking: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Extract booking ID from route arguments if not already set
+    if (_bookingId.isEmpty) {
+      final dynamic args = ModalRoute.of(context)?.settings.arguments;
+      if (args != null) {
+        _bookingId = args.toString();
+        // Fetch details if not already done
+        if (!_isLoading && _errorMessage == null) {
+          _fetchBookingDetails();
+        }
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -118,7 +239,6 @@ class _TrackAmbulance extends State<TrackAmbulance> {
           TextButton.icon(
             onPressed: () {
               // Emergency call functionality
-              // You would implement actual call functionality here
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Calling emergency services...'),
@@ -131,22 +251,76 @@ class _TrackAmbulance extends State<TrackAmbulance> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Status Bar
-          _buildStatusBar(),
+      body:
+          _isLoading
+              ? Center(child: CircularProgressIndicator())
+              : _errorMessage != null
+              ? _buildErrorView()
+              : Column(
+                children: [
+                  // Status Bar
+                  _buildStatusBar(),
 
-          // Main content based on status
-          Expanded(
-            child:
-                _status == BookingStatus.pending
-                    ? _buildPendingView()
-                    : _buildTrackingView(),
-          ),
-        ],
+                  // Main content based on status
+                  Expanded(
+                    child:
+                        _status == BookingStatus.pending
+                            ? _buildPendingView()
+                            : _buildTrackingView(),
+                  ),
+                ],
+              ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 70, color: Colors.red.shade300),
+            SizedBox(height: 24),
+            Text(
+              'Error Loading Booking',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              _errorMessage ?? 'Unknown error occurred',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _fetchBookingDetails,
+              icon: Icon(Icons.refresh),
+              label: Text('Try Again'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade700,
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+            ),
+            SizedBox(height: 12),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Go Back'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  // The rest of your UI methods remain the same, with modifications to use the actual data...
 
   Widget _buildStatusBar() {
     Color statusColor;
@@ -156,7 +330,7 @@ class _TrackAmbulance extends State<TrackAmbulance> {
     switch (_status) {
       case BookingStatus.pending:
         statusColor = Colors.orange;
-        statusText = "Requesting Ambulance";
+        statusText = "Waiting for Driver Acceptance";
         statusIcon = Icons.hourglass_empty;
         break;
       case BookingStatus.accepted:
@@ -202,7 +376,7 @@ class _TrackAmbulance extends State<TrackAmbulance> {
                 ),
                 if (_status == BookingStatus.pending)
                   Text(
-                    'Finding the nearest available ambulance...',
+                    'Please wait while drivers review your request...',
                     style: TextStyle(
                       color: statusColor.withOpacity(0.8),
                       fontSize: 12,
@@ -243,7 +417,61 @@ class _TrackAmbulance extends State<TrackAmbulance> {
           children: [
             // Booking Info Card
             _buildBookingInfoCard(),
-            SizedBox(height: 24),
+            SizedBox(height: 20),
+
+            // Waiting indicator
+            Center(
+              child: Column(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: SizedBox(
+                      width: 60,
+                      height: 60,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 6,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.amber),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 24),
+                  Text(
+                    'Waiting for Driver Acceptance',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Your booking request is being reviewed by nearby drivers',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
+                  SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: _cancelBooking,
+                    icon: Icon(Icons.cancel),
+                    label: Text('Cancel Request'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.red,
+                      side: BorderSide(color: Colors.red),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: 32),
 
             // First Aid Information
             Text(
